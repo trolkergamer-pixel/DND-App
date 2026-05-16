@@ -1,0 +1,29 @@
+{
+  "name": "NextTurn · Combat Tracker",
+  "short_name": "NextTurn",
+  "description": "D&D 5e combat tracker para Dungeon Masters",
+  "start_url": "./NextTurn.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0a0807",
+  "background_color": "#0a0807",
+  "lang": "es",
+  "categories": ["games", "utilities"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
+}

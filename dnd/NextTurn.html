@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>NextTurn · Combat Tracker</title>
+
+<!-- PWA manifest -->
+<link rel="manifest" href="manifest.json"/>
+
+<!-- Theme & status bar color -->
+<meta name="theme-color" content="#0a0807"/>
+<meta name="msapplication-navbutton-color" content="#0a0807"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+
+<!-- iOS PWA support -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="NextTurn"/>
+<link rel="apple-touch-icon" href="icons/icon.svg"/>
+
+<!-- Prevent tap highlight on mobile -->
+<meta name="mobile-web-app-capable" content="yes"/>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Cinzel:wght@500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0807; font-family: 'VT323', monospace;
+                color: #e8d5a8; -webkit-font-smoothing: antialiased; }
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box;
+         background:
+           radial-gradient(ellipse at top, rgba(212,162,76,0.06) 0%, transparent 60%),
+           radial-gradient(ellipse at bottom, rgba(168,50,50,0.05) 0%, transparent 60%),
+           #0a0807;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  button { font-family: inherit; touch-action: manipulation; }
+  input { font-family: inherit; }
+  input::placeholder { color: rgba(232, 213, 168, 0.35); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #5a4632; }
+
+  .stage-title { position: fixed; left: 0; right: 0; top: 12px; text-align: center;
+                 font-family: 'Press Start 2P', monospace; font-size: 10px; color: #5a4632; letter-spacing: 4px; pointer-events: none; }
+
+  /* ── PWA standalone mode ──────────────────────────────────── */
+  /* Shell that fills the real screen, respecting notch/home bar */
+  .nt-pwa-shell {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  @media (display-mode: standalone) {
+    /* Hide desktop-only debug label */
+    .stage-title { display: none !important; }
+    /* Remove body padding/centering — shell is fixed */
+    body { padding: 0; align-items: stretch; justify-content: stretch; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="i18n.jsx"></script>
+<script type="text/babel" src="app.jsx"></script>
+<script type="text/babel" src="screens-setup.jsx"></script>
+<script type="text/babel" src="screens-campaign.jsx"></script>
+<script type="text/babel" src="dice.jsx"></script>
+<script type="text/babel" src="screens-battle.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "palette": "marfil",
+  "scanlines": false,
+  "lang": "es"
+}/*EDITMODE-END*/;
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const palette = PALETTES[t.palette] || PALETTES.forja;
+  const lang = t.lang || 'es';
+
+  const [screen, setScreen] = useState('home');
+  const [players, setPlayers] = useState([]);
+  const [enemies, setEnemies] = useState([]);
+  const [combatants, setCombatants] = useState([]);
+
+  const goHome = () => { setScreen('home'); setPlayers([]); setEnemies([]); setCombatants([]); };
+
+  // Battle exit: merge combatant state back into players, clear enemies, return to campaign
+  const exitBattle = () => {
+    const updated = combatants
+      .filter(c => c.kind === 'player')
+      .map(c => ({
+        id: c.id, name: c.name, maxHp: c.maxHp, hp: c.hp,
+        kind: 'player', init: 0,
+        dead: !!c.dead, stabilized: !!c.stabilized, downed: false,
+        deathSaves: { s: 0, f: 0 },
+      }));
+    // Preserve any players that weren't in combatants (shouldn't happen, but safe)
+    const playerIds = new Set(updated.map(p => p.id));
+    const orphans = players.filter(pl => !playerIds.has(pl.id));
+    setPlayers([...updated, ...orphans]);
+    setEnemies([]);
+    setCombatants([]);
+    setScreen('dm-campaign');
+  };
+
+  const screens = {
+    home: <HomeScreen palette={palette}
+                      onPick={k => setScreen(k === 'dm' ? 'dm-players' : 'mp')}
+                      onOpenSettings={() => setScreen('settings')}/>,
+
+    settings: <SettingsScreen palette={palette}
+                      paletteKey={t.palette}
+                      setPaletteKey={v => setTweak('palette', v)}
+                      lang={lang}
+                      setLang={v => setTweak('lang', v)}
+                      scanlines={t.scanlines}
+                      setScanlines={v => setTweak('scanlines', v)}
+                      onBack={() => setScreen('home')}/>,
+
+    'dm-players': <DMPlayersScreen palette={palette} players={players} setPlayers={setPlayers}
+                      onBack={goHome}
+                      onStart={() => setScreen('dm-campaign')}/>,
+
+    'dm-campaign': <DMCampaignScreen palette={palette} players={players} setPlayers={setPlayers}
+                      onBack={() => setScreen('dm-players')}
+                      onAddEnemies={() => { setEnemies([]); setScreen('dm-enemies'); }}/>,
+
+    'dm-enemies': <DMEnemiesScreen palette={palette} enemies={enemies} setEnemies={setEnemies}
+                      onBack={() => setScreen('dm-campaign')} allowSkip
+                      onNext={() => {
+                        // Only include players who can fight (not dead). Stabilized join the order but are skipped.
+                        const activePlayers = players.filter(p => !p.dead);
+                        setCombatants([...activePlayers.map(p => ({...p, init: 0, downed: p.hp === 0, deathSaves: {s:0,f:0}})), ...enemies]);
+                        setScreen('dm-init');
+                      }}/>,
+
+    'dm-init': <DMInitiativeScreen palette={palette} combatants={combatants} setCombatants={setCombatants}
+                      onBack={() => setScreen('dm-enemies')}
+                      onStart={() => setScreen('dm-battle')}/>,
+
+    'dm-battle': <DMBattleScreen palette={palette} combatants={combatants} setCombatants={setCombatants}
+                      onExit={exitBattle}/>,
+
+    mp:        <MPHubScreen palette={palette} onPick={k => setScreen(k === 'create' ? 'mp-create' : 'mp-join')} onBack={goHome}/>,
+    'mp-create': <MPCreateScreen palette={palette} onBack={() => setScreen('mp')}/>,
+    'mp-join':   <MPJoinScreen palette={palette} onBack={() => setScreen('mp')}/>,
+  };
+
+  return (
+    <LangContext.Provider value={lang}>
+      <div className="stage-title">◆ NEXTTURN · PROTOTIPO ◆</div>
+      <DeviceShell palette={palette} scanlines={t.scanlines}>
+        <div key={screen} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {screens[screen]}
+        </div>
+      </DeviceShell>
+
+      <TweaksPanel>
+        <TweakSection label="App settings"/>
+        <TweakSelect label="Tema / Theme" value={t.palette}
+                     options={Object.entries(PALETTES).map(([k, v]) => ({ value: k, label: v.name }))}
+                     onChange={v => setTweak('palette', v)}/>
+        <TweakRadio label="Idioma / Lang" value={lang}
+                    options={[{value:'es',label:'ES'},{value:'en',label:'EN'}]}
+                    onChange={v => setTweak('lang', v)}/>
+        <TweakToggle label="Scanlines CRT" value={t.scanlines} onChange={v => setTweak('scanlines', v)}/>
+        <TweakSection label="Jump to screen"/>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 6 }}>
+          {[
+            ['home','Home'],
+            ['settings','Settings'],
+            ['dm-players','DM · Heroes'],
+            ['dm-campaign','DM · Session'],
+            ['dm-enemies','DM · Enemies'],
+            ['mp','Multi · Hub'],
+          ].map(([k, lbl]) => (
+            <TweakButton key={k} label={lbl} onClick={() => setScreen(k)}/>
+          ))}
+        </div>
+        <TweakSection label="Demo shortcuts"/>
+        <TweakButton label="Load demo session" onClick={() => {
+          const ps = [
+            { id: 1, name: 'Aelar',     maxHp: 32, hp: 32, kind: 'player', init: 0, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+            { id: 2, name: 'Borin',     maxHp: 45, hp: 28, kind: 'player', init: 0, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+            { id: 3, name: 'Mira',      maxHp: 26, hp: 18, kind: 'player', init: 0, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+            { id: 4, name: 'Thorgrim',  maxHp: 52, hp: 52, kind: 'player', init: 0, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+          ];
+          setPlayers(ps); setEnemies([]); setCombatants([]); setScreen('dm-campaign');
+        }}/>
+        <TweakButton label="⚔ Demo battle" onClick={() => {
+          const ps = [
+            { id: 1, name: 'Aelar', maxHp: 32, hp: 32, kind: 'player', init: 18, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+            { id: 2, name: 'Borin', maxHp: 45, hp: 28, kind: 'player', init: 12, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+            { id: 3, name: 'Mira',  maxHp: 26, hp: 6,  kind: 'player', init: 21, dead: false, stabilized: false, deathSaves: {s:0,f:0} },
+          ];
+          const es = [
+            { id: 4, baseName:'Zombi', name: 'Zombi A',  glyph:'zo', maxHp: 22, hp: 22, ca: 8,  kind: 'enemy', init: 9, dead: false },
+            { id: 5, baseName:'Zombi', name: 'Zombi B',  glyph:'zo', maxHp: 22, hp: 13, ca: 8,  kind: 'enemy', init: 7, dead: false },
+            { id: 6, baseName:'Ogro',  name: 'Ogro',     glyph:'og', maxHp: 59, hp: 40, ca: 11, kind: 'enemy', init: 8, dead: false },
+            { id: 7, baseName:'Esqueleto', name:'Esqueleto', glyph:'es', maxHp: 13, hp: 13, ca: 13, kind: 'enemy', init: 16, dead: false },
+          ];
+          setPlayers(ps); setEnemies(es); setCombatants([...ps, ...es]); setScreen('dm-battle');
+        }}/>
+      </TweaksPanel>
+    </LangContext.Provider>
+  );
+}
+
+// Device shell — adapts between desktop prototype bezel and real PWA fullscreen
+function DeviceShell({ children, palette, scanlines }) {
+  const p = palette;
+
+  // Detect installed PWA (standalone display mode)
+  const isStandalone = React.useMemo(() =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true,
+  []);
+
+  const Scanlines = () => scanlines ? (
+    <div style={{
+      position: 'absolute', inset: 0, pointerEvents: 'none',
+      backgroundImage: `repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px)`,
+      mixBlendMode: 'multiply', zIndex: 50,
+    }}/>
+  ) : null;
+
+  // ── Fullscreen PWA shell (installed on Android/iOS) ──────────
+  if (isStandalone) {
+    return (
+      <div className="nt-pwa-shell"
+           style={{ background: p.bg, transition: 'background 0.35s ease' }}>
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {children}
+          <Scanlines/>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Desktop prototype shell (phone bezel) ────────────────────
+  return (
+    <div style={{
+      width: 392, height: 820,
+      borderRadius: 32, padding: 8,
+      background: 'linear-gradient(160deg, #2a2520, #15110d)',
+      boxShadow: '0 30px 80px rgba(0,0,0,0.7), inset 0 0 0 2px rgba(212,162,76,0.15)',
+      position: 'relative',
+    }}>
+      <div style={{ position: 'absolute', left: -2, top: '40%', width: 4, height: 28, background: '#0a0807', borderRadius: 2 }}/>
+      <div style={{ position: 'absolute', left: -2, top: '50%', width: 4, height: 60, background: '#0a0807', borderRadius: 2 }}/>
+      <div style={{ position: 'absolute', right: -2, top: '38%', width: 4, height: 76, background: '#0a0807', borderRadius: 2 }}/>
+
+      <div style={{
+        width: '100%', height: '100%', borderRadius: 24,
+        background: p.bg, overflow: 'hidden', position: 'relative',
+        display: 'flex', flexDirection: 'column',
+        transition: 'background 0.35s ease',
+      }}>
+        <div style={{
+          height: 28, padding: '0 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontFamily: '"VT323", monospace', fontSize: 14, color: p.ink, letterSpacing: 1, flexShrink: 0,
+        }}>
+          <span>9:30</span>
+          <div style={{ position: 'absolute', left: '50%', top: 8, transform: 'translateX(-50%)',
+                        width: 12, height: 12, borderRadius: 100, background: '#000' }}/>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>▲▲</span>
+            <span>██</span>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {children}
+          <Scanlines/>
+        </div>
+
+        <div style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: p.bg2, flexShrink: 0 }}>
+          <div style={{ width: 110, height: 4, borderRadius: 2, background: p.line }}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+
+<script>
+// Register service worker for PWA offline support
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('[SW] Registered, scope:', reg.scope))
+      .catch(err => console.warn('[SW] Registration failed:', err));
+  });
+}
+</script>
+</body>
+</html>
